@@ -149,6 +149,13 @@ function itemBalance(material, until = null) {
 }
 function getWarehouse(id) { return state.warehouses.find(warehouse => warehouse.id === id); }
 function getMaterial(id) { return state.materials.find(material => material.id === id); }
+function materialSupplier(material, until = null) {
+	const supplierMovement = state.movements.find(movement => movement.material_id === material.id
+		&& ['opening', 'inbound'].includes(movement.movement_type)
+		&& movement.supplier?.trim()
+		&& (!until || localDateKey(movement.happened_at) <= until));
+	return supplierMovement?.supplier?.trim() || material.supplier?.trim() || '—';
+}
 function lowStockMaterials() {
 	return state.materials.filter(material => Number(material.minimum_base) > 0 && itemBalance(material) <= Number(material.minimum_base));
 }
@@ -373,14 +380,14 @@ function renderWarehouse(warehouse) {
 	const isEmpties = warehouse.kind === 'empties';
 	return `<div class="section-intro"><div><h2>${escapeHtml(warehouse.name)}</h2><span class="kind-badge ${isEmpties ? 'kind-empty' : ''}">${warehouseKindLabel(warehouse.kind)}</span></div><div class="inline-actions"><button class="button button-danger-outline" data-action="delete-warehouse" data-warehouse="${warehouse.id}">${icon('trash-2')} حذف المخزن</button><button class="button button-secondary" data-action="movement" data-warehouse="${warehouse.id}">${icon('repeat-2')} حركة مخزون</button><button class="button button-primary" data-action="add-material" data-warehouse="${warehouse.id}">${icon('plus')} إضافة صنف</button></div></div>
 		<section class="panel table-panel"><div class="panel-heading"><div><p class="eyebrow">الرصيد الحالي</p><h3>الأصناف في المخزن</h3></div><span class="quiet-badge">${formatNumber(materials.length, 0)} أصناف</span></div>
-		${materials.length ? `<div class="table-scroll"><table><thead><tr><th>اسم الصنف</th><th>الرصيد الحالي</th><th>الحد الأدنى</th><th>آخر حركة</th><th>الحالة</th><th></th></tr></thead><tbody>${materials.map(material => materialTableRow(material)).join('')}</tbody></table></div>` : emptyState(isEmpties ? 'package-open' : 'flask-conical', 'المخزن فارغ حتى الآن', 'أضف صنفًا وسجل رصيده الافتتاحي للبدء.')}</section>`;
+		${materials.length ? `<div class="table-scroll"><table><thead><tr><th>اسم الصنف</th><th>المورد</th><th>الرصيد الحالي</th><th>الحد الأدنى</th><th>آخر حركة</th><th>الحالة</th><th></th></tr></thead><tbody>${materials.map(material => materialTableRow(material)).join('')}</tbody></table></div>` : emptyState(isEmpties ? 'package-open' : 'flask-conical', 'المخزن فارغ حتى الآن', 'أضف صنفًا وسجل رصيده الافتتاحي للبدء.')}</section>`;
 }
 
 function materialTableRow(material, balance = itemBalance(material), atDate = null) {
 	const minimum = Number(material.minimum_base || 0);
 	const low = minimum > 0 && balance <= minimum;
 	const last = state.movements.find(movement => movement.material_id === material.id && (!atDate || localDateKey(movement.happened_at) <= atDate));
-	return `<tr><td><b class="table-primary">${escapeHtml(material.name)}</b><small>${warehouseKindLabel(getWarehouse(material.warehouse_id)?.kind || 'raw')}</small></td><td class="amount-cell">${displayAmount(balance, material.unit)}</td><td>${minimum ? displayAmount(minimum, material.unit) : 'غير محدد'}</td><td>${last ? formatDate(last.happened_at) : '—'}</td><td><span class="status ${low ? 'status-low' : 'status-ok'}">${low ? 'منخفض' : 'طبيعي'}</span></td><td><button class="icon-button row-action" data-action="movement" data-warehouse="${material.warehouse_id}" data-material="${material.id}" title="تسجيل حركة">${icon('plus')}</button><button class="icon-button row-action" data-action="edit-material" data-material="${material.id}" title="تعديل الصنف">${icon('pencil')}</button><button class="row-delete-button" data-action="delete-material" data-material="${material.id}" title="حذف الصنف">${icon('trash-2')}<span>حذف</span></button></td></tr>`;
+	return `<tr><td><b class="table-primary">${escapeHtml(material.name)}</b></td><td>${escapeHtml(materialSupplier(material, atDate))}</td><td class="amount-cell">${displayAmount(balance, material.unit)}</td><td>${minimum ? displayAmount(minimum, material.unit) : 'غير محدد'}</td><td>${last ? formatDate(last.happened_at) : '—'}</td><td><span class="status ${low ? 'status-low' : 'status-ok'}">${low ? 'منخفض' : 'طبيعي'}</span></td><td><button class="icon-button row-action" data-action="movement" data-warehouse="${material.warehouse_id}" data-material="${material.id}" title="تسجيل حركة">${icon('plus')}</button><button class="icon-button row-action" data-action="edit-material" data-material="${material.id}" title="تعديل الصنف">${icon('pencil')}</button><button class="row-delete-button" data-action="delete-material" data-material="${material.id}" title="حذف الصنف">${icon('trash-2')}<span>حذف</span></button></td></tr>`;
 }
 
 function renderReports() {
@@ -390,13 +397,13 @@ function renderReports() {
 	return `<div class="section-intro"><div><p class="eyebrow">مراجعة الأرصدة</p><h2>التقارير</h2><p class="muted">استعرض أرصدة الأصناف كما كانت في تاريخ محدد.</p></div><div class="report-controls"><label>الرصيد حتى تاريخ<input id="report-date" type="date" value="${state.reportDate}" max="${today()}"></label><button class="button button-secondary" data-action="export-report">${icon('file-down')} تصدير CSV</button></div></div>
 		<div class="report-summary"><div class="report-stat">${icon('boxes')}<span>الأصناف</span><b>${formatNumber(rows.length, 0)}</b></div><div class="report-stat warning-stat">${icon('triangle-alert')}<span>تحت الحد الأدنى</span><b>${formatNumber(low.length, 0)}</b></div><div class="report-stat">${icon('activity')}<span>إجمالي الحركات حتى التاريخ</span><b>${formatNumber(movementRows.length, 0)}</b></div></div>
 		<section class="panel table-panel"><div class="panel-heading"><div><p class="eyebrow">جرد تاريخي</p><h3>الأرصدة في ${formatDate(state.reportDate)}</h3></div><span class="quiet-badge">${formatNumber(rows.length, 0)} صنف</span></div>
-		${rows.length ? `<div class="table-scroll"><table><thead><tr><th>الصنف</th><th>المخزن</th><th>الرصيد بالتاريخ المحدد</th><th>الحد الأدنى</th><th>الحالة</th><th>آخر حركة حتى التاريخ</th></tr></thead><tbody>${rows.map(({ material, balance }) => {
+		${rows.length ? `<div class="table-scroll"><table><thead><tr><th>الصنف</th><th>المورد</th><th>المخزن</th><th>الرصيد بالتاريخ المحدد</th><th>الحد الأدنى</th><th>الحالة</th><th>آخر حركة حتى التاريخ</th></tr></thead><tbody>${rows.map(({ material, balance }) => {
 			const minimum = Number(material.minimum_base || 0);
 			const isLow = minimum > 0 && balance <= minimum;
 			const last = state.movements.find(m => m.material_id === material.id && localDateKey(m.happened_at) <= state.reportDate);
-			return `<tr><td><b class="table-primary">${escapeHtml(material.name)}</b></td><td>${escapeHtml(getWarehouse(material.warehouse_id)?.name || '')}</td><td class="amount-cell">${displayAmount(balance, material.unit)}</td><td>${minimum ? displayAmount(minimum, material.unit) : '—'}</td><td><span class="status ${isLow ? 'status-low' : 'status-ok'}">${isLow ? 'منخفض' : 'طبيعي'}</span></td><td>${last ? formatDate(last.happened_at) : '—'}</td></tr>`;
+			return `<tr><td><b class="table-primary">${escapeHtml(material.name)}</b></td><td>${escapeHtml(materialSupplier(material, state.reportDate))}</td><td>${escapeHtml(getWarehouse(material.warehouse_id)?.name || '')}</td><td class="amount-cell">${displayAmount(balance, material.unit)}</td><td>${minimum ? displayAmount(minimum, material.unit) : '—'}</td><td><span class="status ${isLow ? 'status-low' : 'status-ok'}">${isLow ? 'منخفض' : 'طبيعي'}</span></td><td>${last ? formatDate(last.happened_at) : '—'}</td></tr>`;
 		}).join('')}</tbody></table></div>` : emptyState('file-chart-column', 'لا توجد بيانات للتقرير', 'أضف مخزنًا وأصنافًا لتظهر الأرصدة هنا.')}</section>
-		${low.length ? `<section class="panel low-panel"><div class="panel-heading"><div><p class="eyebrow">تنبيه مخزون</p><h3>أصناف تحت الحد الأدنى</h3></div><span class="status status-low">${formatNumber(low.length, 0)} أصناف</span></div><div class="table-scroll"><table><thead><tr><th>الصنف</th><th>المخزن</th><th>الرصيد</th><th>الحد الأدنى</th></tr></thead><tbody>${low.map(({ material, balance }) => `<tr><td>${escapeHtml(material.name)}</td><td>${escapeHtml(getWarehouse(material.warehouse_id)?.name || '')}</td><td>${displayAmount(balance, material.unit)}</td><td>${displayAmount(material.minimum_base, material.unit)}</td></tr>`).join('')}</tbody></table></div></section>` : ''}`;
+		${low.length ? `<section class="panel low-panel"><div class="panel-heading"><div><p class="eyebrow">تنبيه مخزون</p><h3>أصناف تحت الحد الأدنى</h3></div><span class="status status-low">${formatNumber(low.length, 0)} أصناف</span></div><div class="table-scroll"><table><thead><tr><th>الصنف</th><th>المورد</th><th>المخزن</th><th>الرصيد</th><th>الحد الأدنى</th></tr></thead><tbody>${low.map(({ material, balance }) => `<tr><td>${escapeHtml(material.name)}</td><td>${escapeHtml(materialSupplier(material, state.reportDate))}</td><td>${escapeHtml(getWarehouse(material.warehouse_id)?.name || '')}</td><td>${displayAmount(balance, material.unit)}</td><td>${displayAmount(material.minimum_base, material.unit)}</td></tr>`).join('')}</tbody></table></div></section>` : ''}`;
 }
 
 function renderSettings() {
@@ -546,6 +553,7 @@ function showEditMaterialModal(materialId) {
 	const divisor = WEIGHT_UNITS[material.unit] || 1;
 	showModal('تعديل بيانات الصنف', 'يؤثر تعديل الاسم على الحركات السابقة المرتبطة به، ولا يغيّر سجل الأرصدة.', `<form id="modal-form" class="form-stack" data-form="edit-material" data-material="${material.id}">
 		<label>اسم الصنف<input name="name" maxlength="100" value="${escapeHtml(material.name)}" required></label>
+		<label>المورد<input name="supplier" maxlength="120" value="${escapeHtml(material.supplier || '')}" placeholder="اسم المورد"></label>
 		<label>الحد الأدنى (${UNIT_LABELS[material.unit]})<input name="minimum" type="number" min="0" step="any" value="${Number(material.minimum_base) / divisor}" required></label>
 		<div class="modal-actions"><button type="button" class="button button-secondary" data-dismiss>إلغاء</button><button class="button button-primary" type="submit">حفظ التعديل ${icon('check')}</button></div>
 	</form>`);
@@ -643,25 +651,53 @@ async function createWarehouse(values) {
 	if (error) throw error;
 	closeModal(); await loadData(); toast('تم إنشاء المخزن');
 }
+
+function isMissingSupplierColumn(error) {
+	return error?.code === '42703' || error?.code === 'PGRST204' || /materials\.supplier/i.test(error?.message || '');
+}
+
+async function insertMaterialRecord(payload) {
+	let result = await state.client.from('materials').insert(payload).select().single();
+	if (!result.error || !Object.prototype.hasOwnProperty.call(payload, 'supplier') || !isMissingSupplierColumn(result.error)) {
+		return { ...result, supplierSaved: true };
+	}
+	const { supplier: _supplier, ...legacyPayload } = payload;
+	result = await state.client.from('materials').insert(legacyPayload).select().single();
+	return { ...result, supplierSaved: false };
+}
+
+async function updateMaterialRecord(materialId, payload) {
+	let { error } = await state.client.from('materials').update(payload).eq('id', materialId);
+	if (!error || !Object.prototype.hasOwnProperty.call(payload, 'supplier') || !isMissingSupplierColumn(error)) {
+		return { error, supplierSaved: true };
+	}
+	const { supplier: _supplier, ...legacyPayload } = payload;
+	({ error } = await state.client.from('materials').update(legacyPayload).eq('id', materialId));
+	return { error, supplierSaved: false };
+}
+
 async function createMaterial(values, warehouseId) {
 	const name = values.get('name').trim();
 	if (state.materials.some(item => item.warehouse_id === warehouseId && item.name.toLowerCase() === name.toLowerCase())) throw new Error('هذا الصنف موجود بالفعل في المخزن');
 	const unit = values.get('unit');
 	const minimum = toBase(values.get('minimum') || 0, unit);
-	const { data: material, error } = await state.client.from('materials').insert({
-		warehouse_id: warehouseId, name, unit, minimum_base: minimum, user_id: state.session.user.id
-	}).select().single();
+	const supplier = values.get('supplier')?.trim() || null;
+	const { data: material, error, supplierSaved } = await insertMaterialRecord({
+		warehouse_id: warehouseId, name, unit, supplier, minimum_base: minimum, user_id: state.session.user.id
+	});
 	if (error) throw error;
 	const opening = Number(values.get('opening') || 0);
 	if (opening > 0) {
 		const { error: movementError } = await state.client.from('stock_movements').insert({
 			warehouse_id: warehouseId, material_id: material.id, movement_type: 'opening',
-			quantity_base: toBase(opening, unit), supplier: values.get('supplier')?.trim() || null,
+			quantity_base: toBase(opening, unit), supplier,
 			happened_at: dateInputTimestamp(values.get('date')), notes: 'رصيد افتتاحي', user_id: state.session.user.id
 		});
 		if (movementError) throw movementError;
 	}
-	closeModal(); await loadData(); toast(opening > 0 ? 'تم حفظ الصنف ورصيده الافتتاحي' : 'تم حفظ الصنف');
+	closeModal(); await loadData();
+	if (!supplierSaved && supplier && opening <= 0) toast('تم حفظ الصنف، لكن المورد لن يُحفظ حتى تشغيل تحديث supplier في Supabase.');
+	else toast(opening > 0 ? 'تم حفظ الصنف ورصيده الافتتاحي' : 'تم حفظ الصنف');
 }
 
 async function updateMaterial(values, materialId) {
@@ -669,9 +705,12 @@ async function updateMaterial(values, materialId) {
 	if (!material) throw new Error('تعذر العثور على الصنف');
 	const name = values.get('name').trim();
 	if (state.materials.some(item => item.id !== materialId && item.warehouse_id === material.warehouse_id && item.name.toLowerCase() === name.toLowerCase())) throw new Error('يوجد صنف بهذا الاسم في المخزن');
-	const { error } = await state.client.from('materials').update({ name, minimum_base: toBase(values.get('minimum'), material.unit) }).eq('id', materialId);
+	const supplier = values.get('supplier')?.trim() || null;
+	const { error, supplierSaved } = await updateMaterialRecord(materialId, { name, supplier, minimum_base: toBase(values.get('minimum'), material.unit) });
 	if (error) throw error;
-	closeModal(); await loadData(); toast('تم تحديث بيانات الصنف');
+	closeModal(); await loadData();
+	if (!supplierSaved && supplier) toast('تم تحديث الصنف، لكن المورد لن يُحفظ حتى تشغيل تحديث supplier في Supabase.');
+	else toast('تم تحديث بيانات الصنف');
 }
 
 async function updateMovementDate(values, movementId) {
@@ -715,7 +754,7 @@ async function createMovement(values, warehouseId) {
 		if (quantity > itemBalance(material, values.get('date'))) throw new Error('الكمية أكبر من الرصيد المتاح بتاريخ الحركة');
 		let destMaterial = state.materials.find(item => item.warehouse_id === destination.id && item.name.toLowerCase() === material.name.toLowerCase());
 		if (!destMaterial) {
-			const { data, error } = await state.client.from('materials').insert({ warehouse_id: destination.id, name: material.name, unit: material.unit, minimum_base: 0, user_id: state.session.user.id }).select().single();
+			const { data, error } = await insertMaterialRecord({ warehouse_id: destination.id, name: material.name, unit: material.unit, supplier: material.supplier || null, minimum_base: 0, user_id: state.session.user.id });
 			if (error) throw error;
 			destMaterial = data;
 		}
@@ -754,11 +793,11 @@ async function createAccount(values) {
 }
 
 function exportReport() {
-	const rows = [['الصنف', 'المخزن', 'النوع', 'الرصيد', 'الوحدة', 'الحد الأدنى', 'الحالة']];
+	const rows = [['الصنف', 'المورد', 'المخزن', 'النوع', 'الرصيد', 'الوحدة', 'الحد الأدنى', 'الحالة']];
 	for (const material of state.materials) {
 		const balance = itemBalance(material, state.reportDate);
 		const low = Number(material.minimum_base) > 0 && balance <= Number(material.minimum_base);
-		rows.push([material.name, getWarehouse(material.warehouse_id)?.name || '', warehouseKindLabel(getWarehouse(material.warehouse_id)?.kind), (balance / (WEIGHT_UNITS[material.unit] || 1)).toString(), UNIT_LABELS[material.unit], (Number(material.minimum_base) / (WEIGHT_UNITS[material.unit] || 1)).toString(), low ? 'منخفض' : 'طبيعي']);
+		rows.push([material.name, materialSupplier(material, state.reportDate), getWarehouse(material.warehouse_id)?.name || '', warehouseKindLabel(getWarehouse(material.warehouse_id)?.kind), (balance / (WEIGHT_UNITS[material.unit] || 1)).toString(), UNIT_LABELS[material.unit], (Number(material.minimum_base) / (WEIGHT_UNITS[material.unit] || 1)).toString(), low ? 'منخفض' : 'طبيعي']);
 	}
 	const csv = '\uFEFF' + rows.map(row => row.map(value => `"${String(value).replaceAll('"', '""')}"`).join(',')).join('\r\n');
 	const link = document.createElement('a');

@@ -19,6 +19,7 @@ create table if not exists public.materials (
   warehouse_id uuid not null,
   name text not null check (length(trim(name)) between 1 and 100),
   unit text not null check (unit in ('g', 'kg', 'ton', 'bag')),
+  supplier text,
   minimum_base numeric not null default 0 check (minimum_base >= 0),
   created_at timestamptz not null default now(),
   unique (id, user_id),
@@ -26,6 +27,8 @@ create table if not exists public.materials (
   unique (warehouse_id, user_id, name),
   foreign key (warehouse_id, user_id) references public.warehouses(id, user_id) on delete cascade
 );
+
+alter table public.materials add column if not exists supplier text;
 
 create table if not exists public.stock_movements (
   id uuid primary key default gen_random_uuid(),
@@ -70,3 +73,5 @@ grant usage on schema public to authenticated;
 grant select, insert, update, delete on public.warehouses to authenticated;
 grant select, insert, update, delete on public.materials to authenticated;
 grant select, insert, update, delete on public.stock_movements to authenticated;
+
+notify pgrst, 'reload schema';
