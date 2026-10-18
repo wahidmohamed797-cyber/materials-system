@@ -265,6 +265,8 @@ async function openMaterialFilter(materialId, focusMovementId = null) {
 			const rows = await selectMaterialMovements(nextId);
 			const transferRefs = new Set();
 			for (const row of rows) {
+				const relatedMaterial = getMaterial(row.material_id);
+				if (!relatedMaterial || normalizeCode(relatedMaterial.code).toLowerCase() !== code) continue;
 				movements.set(row.id, row);
 				if (row.transfer_ref && !scannedTransfers.has(row.transfer_ref)) transferRefs.add(row.transfer_ref);
 			}
@@ -688,11 +690,17 @@ function renderMaterialHistory() {
 	const material = getMaterial(state.filteredMaterialId);
 	if (!material) return emptyState('package-search', 'الصنف غير موجود', 'قد يكون الصنف حُذف من المخزون.');
 	const relatedMaterials = state.filteredMaterialIds.map(getMaterial).filter(Boolean);
+	const warehouseBalances = relatedMaterials.map(record => ({ record, warehouse: getWarehouse(record.warehouse_id), balance: itemBalance(record) }));
 	const totalBalance = state.filteredMaterialIds.reduce((total, id) => total + Number(state.balances[id]?.quantity_base || 0), 0);
 	const returned = state.filteredMovements.filter(movement => movement.movement_type === 'return')
 		.reduce((total, movement) => total + Number(movement.quantity_base || 0), 0);
 	return `<div class="section-intro"><div><p class="eyebrow">نتائج التصفية</p><h2>${escapeHtml(material.name)}</h2><p class="muted">كود ${escapeHtml(materialCode(material))} · ${formatNumber(relatedMaterials.length, 0)} سجل صنف بين المخازن</p></div></div>
 		<div class="report-summary inventory-summary"><div class="report-stat">${icon('scan-barcode')}<span>كود الصنف</span><b>${escapeHtml(materialCode(material))}</b></div><div class="report-stat">${icon('package-check')}<span>الرصيد الحالي في المخازن المرتبطة</span><b>${displayAmount(totalBalance, material.unit)}</b></div><div class="report-stat">${icon('list-checks')}<span>عدد الحركات</span><b>${formatNumber(state.filteredMovements.length, 0)}</b></div><div class="report-stat">${icon('corner-down-left')}<span>إجمالي المرتجع</span><b>${displayAmount(returned, material.unit)}</b></div></div>
+		<section class="panel table-panel"><div class="panel-heading"><div><p class="eyebrow">توزيع الرصيد</p><h3>الكمية في كل مخزن</h3></div><span class="quiet-badge">${formatNumber(warehouseBalances.length, 0)} مخازن</span></div>
+		${warehouseBalances.length ? `<div class="table-scroll"><table><thead><tr><th>المخزن</th><th>حالة المخزن</th><th>الرصيد</th><th></th></tr></thead><tbody>${warehouseBalances.map(({ record, warehouse, balance }) => {
+			const closed = warehouse?.is_open === false;
+			return `<tr><td><b class="table-primary">${escapeHtml(warehouse?.name || 'مخزن غير موجود')}</b></td><td><span class="status ${closed ? 'status-low' : 'status-ok'}">${closed ? 'مغلق' : 'نشط'}</span></td><td class="amount-cell">${displayAmount(balance, material.unit)}</td><td><button class="button button-secondary button-small" data-action="movement" data-warehouse="${escapeHtml(record.warehouse_id)}" data-material="${escapeHtml(record.id)}" title="إضافة كمية لهذا المخزن" ${closed || !warehouse ? 'disabled' : ''}>${icon('plus', 15)} إضافة كمية</button></td></tr>`;
+		}).join('')}</tbody></table></div>` : emptyState('warehouse', 'الصنف غير مرتبط بمخزن', 'لا يوجد رصيد مخزن لهذا الكود.')}</section>
 		<section class="panel table-panel"><div class="panel-heading"><div><p class="eyebrow">كل التواريخ</p><h3>سجل حركات الصنف المرتبط</h3></div><span class="quiet-badge">${formatNumber(state.filteredMovements.length, 0)} حركة</span></div>
 		${state.materialFilterLoading ? emptyState('loader-circle', 'جارٍ تحميل الحركات', 'يتم جمع الحركات من كل التواريخ والمخازن المرتبطة.') : state.materialFilterError ? emptyState('triangle-alert', 'تعذر تحميل الحركات', state.materialFilterError) : state.filteredMovements.length ? `<div class="table-scroll"><table><thead><tr><th>التاريخ</th><th>نوع الحركة</th><th>المخزن</th><th>رقم المستند أو المستفيد</th><th>الكمية</th><th>ملاحظات</th></tr></thead><tbody>${state.filteredMovements.map(materialHistoryRow).join('')}</tbody></table></div>` : emptyState('activity', 'لا توجد حركات مسجلة', 'لا يوجد سجل حركات لهذا الصنف حتى الآن.')}
 		</section>`;
@@ -1265,7 +1273,12 @@ async function renderSearchResults(query) {
 	if (!term) { state.searchRenderedTerm = ''; resultsElement.hidden = true; resultsElement.innerHTML = ''; return; }
 	const sequence = ++state.searchSequence;
 	const warehouses = state.warehouses.filter(warehouse => warehouse.name.toLocaleLowerCase().includes(term)).slice(0, 4);
-	const materials = state.materials.filter(material => material.name.toLocaleLowerCase().includes(term) || materialCode(material).toLocaleLowerCase().includes(term)).slice(0, 6);
+	const materials = materialsByCode(state.materials.filter(material => material.name.toLocaleLowerCase().includes(term) || materialCode(material).toLocaleLowerCase().includes(term)))
+		.slice(0, 6).map(records => ({
+			material: records[0],
+			records,
+			balance: records.reduce((total, material) => total + itemBalance(material), 0)
+		}));
 	const suppliers = state.suppliers.filter(supplier => supplier.name.toLocaleLowerCase().includes(term) || (supplier.phone || '').includes(term)).slice(0, 4);
 	let movements = [];
 	if (state.client && state.session) {
@@ -1275,7 +1288,7 @@ async function renderSearchResults(query) {
 	if (sequence !== state.searchSequence || app.querySelector('#global-search')?.value.trim().toLocaleLowerCase() !== term) return;
 	state.searchRenderedTerm = query.trim();
 	const hasResults = warehouses.length || materials.length || suppliers.length || movements.some(movement => getMaterial(movement.material_id));
-	resultsElement.innerHTML = `<div class="popover-heading">${icon('search', 15)} نتائج البحث</div>${hasResults ? `${warehouses.map(warehouse => `<button class="search-result" data-search-warehouse="${warehouse.id}"><span class="result-icon">${icon(warehouse.kind === 'empties' ? 'package-open' : 'warehouse', 16)}</span><span><b>${escapeHtml(warehouse.name)}</b><small>مخزن ${warehouseKindLabel(warehouse.kind)}</small></span>${icon('arrow-up-left', 15)}</button>`).join('')}${materials.map(material => `<button class="search-result" data-filter-material="${material.id}"><span class="result-icon result-material">${icon('package', 16)}</span><span><b>${escapeHtml(material.name)}</b><small>${escapeHtml(materialCode(material))} · ${escapeHtml(getWarehouse(material.warehouse_id)?.name || 'مخزن')}</small></span><span class="result-amount">${displayAmount(itemBalance(material), material.unit)}</span></button>`).join('')}${suppliers.map(supplier => `<button class="search-result" data-search-page="suppliers"><span class="result-icon">${icon('handshake', 16)}</span><span><b>${escapeHtml(supplier.name)}</b><small>مورد${supplier.phone ? ` · ${escapeHtml(supplier.phone)}` : ''}</small></span>${icon('arrow-up-left', 15)}</button>`).join('')}${movements.filter(movement => getMaterial(movement.material_id)).map(movement => {
+	resultsElement.innerHTML = `<div class="popover-heading">${icon('search', 15)} نتائج البحث</div>${hasResults ? `${warehouses.map(warehouse => `<button class="search-result" data-search-warehouse="${warehouse.id}"><span class="result-icon">${icon(warehouse.kind === 'empties' ? 'package-open' : 'warehouse', 16)}</span><span><b>${escapeHtml(warehouse.name)}</b><small>مخزن ${warehouseKindLabel(warehouse.kind)}</small></span>${icon('arrow-up-left', 15)}</button>`).join('')}${materials.map(({ material, records, balance }) => `<button class="search-result" data-filter-material="${material.id}"><span class="result-icon result-material">${icon('package', 16)}</span><span><b>${escapeHtml(material.name)}</b><small>${escapeHtml(materialCode(material))} · موجود في ${formatNumber(records.length, 0)} مخازن</small></span><span class="result-amount">${displayAmount(balance, material.unit)}</span></button>`).join('')}${suppliers.map(supplier => `<button class="search-result" data-search-page="suppliers"><span class="result-icon">${icon('handshake', 16)}</span><span><b>${escapeHtml(supplier.name)}</b><small>مورد${supplier.phone ? ` · ${escapeHtml(supplier.phone)}` : ''}</small></span>${icon('arrow-up-left', 15)}</button>`).join('')}${movements.filter(movement => getMaterial(movement.material_id)).map(movement => {
 		const material = getMaterial(movement.material_id);
 		const title = movement.voucher_no ? `مستند ${movement.voucher_no}` : MOVEMENT_LABELS[movement.movement_type] || 'حركة';
 		return `<button class="search-result" data-filter-material="${material.id}" data-focus-movement="${movement.id}"><span class="result-icon">${icon(movement.movement_type === 'production_issue' ? 'factory' : 'arrow-left-right', 16)}</span><span><b>${escapeHtml(title)}</b><small>${escapeHtml(material.name)} · ${escapeHtml(movement.beneficiary || movement.supplier || movement.notes || MOVEMENT_LABELS[movement.movement_type] || 'حركة')} · ${formatDate(movement.happened_at)}</small></span>${icon('arrow-up-left', 15)}</button>`;
@@ -1704,6 +1717,7 @@ async function createProductionIssue(values) {
 }
 
 async function createMovement(values, warehouseId) {
+	const filteredMaterialId = state.page === 'material-history' ? state.filteredMaterialId : null;
 	const warehouse = getWarehouse(warehouseId);
 	const material = findWarehouseMaterialByInput(values.get('material'), warehouseId);
 	if (!material || !warehouse) throw new Error('تعذر العثور على الصنف أو المخزن');
@@ -1734,7 +1748,9 @@ async function createMovement(values, warehouseId) {
 			p_quantity_base: quantity, p_happened_at: date, p_notes: baseValues.notes
 		});
 		if (error) throw error;
-		closeModal(); await loadData(); toast('تم التحويل بين المخزنين'); return;
+		closeModal(); await loadData();
+		if (filteredMaterialId && getMaterial(filteredMaterialId)) await openMaterialFilter(filteredMaterialId);
+		toast('تم التحويل بين المخزنين'); return;
 	} else {
 		const quantity = toBase(values.get('quantity'), values.get('unit'));
 		if (!Number.isFinite(quantity) || quantity <= 0) throw new Error('أدخل كمية أكبر من صفر');
@@ -1745,7 +1761,9 @@ async function createMovement(values, warehouseId) {
 	}
 	const { error } = await state.client.from('stock_movements').insert(record);
 	if (error) throw error;
-	closeModal(); await loadData(); toast('تم تسجيل الحركة');
+	closeModal(); await loadData();
+	if (filteredMaterialId && getMaterial(filteredMaterialId)) await openMaterialFilter(filteredMaterialId);
+	toast('تم تسجيل الحركة');
 }
 
 async function createAccount(values) {
